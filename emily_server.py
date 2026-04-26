@@ -11,7 +11,7 @@ client = Groq(api_key="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"
 
 # --- CONEXIÓN A MONGODB ---
 # REEMPLAZA ESTO con la cadena que copiaste de MongoDB Atlas
-MONGO_URI = "mongodb+srv://TU_USUARIO:TU_PASSWORD@emily.xxxx.mongodb.net/?retryWrites=true&w=majority"
+MONGO_URI = "mongodb+srv://Percidokja:Rick00958@emily.xqmo5d9.mongodb.net/?appName=EMILY"
 db_client = MongoClient(MONGO_URI)
 db = db_client.emily_ai
 chat_history = db.historial_perci
