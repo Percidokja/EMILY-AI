@@ -1,151 +1,199 @@
-import os
-import datetime
-import base64
-from io import BytesIO
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
-from groq import Groq
-from pymongo import MongoClient
-from gtts import gTTS
-
-app = FastAPI()
-client = Groq(api_key="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")
-
-# --- CONEXIÓN A MONGODB ---
-MONGO_URI = "mongodb+srv://Percidokja:Rick00958@emily.xqmo5d9.mongodb.net/emily_ai?retryWrites=true&w=majority&appName=EMILY"
-db_client = MongoClient(MONGO_URI)
-db = db_client.emily_ai
-chat_history = db.historial_perci
-
-class Consulta(BaseModel):
-    pregunta: str
-    usuario: str = "Perci"
-
-# --- LÓGICA DE PERSISTENCIA ---
-@app.get("/historial")
-def obtener_historial():
-    pasado = list(chat_history.find().sort("timestamp", -1).limit(15))
-    return {"historial": [{"u": m['pregunta'], "e": m['respuesta']} for m in reversed(pasado)]}
-
-def gestionar_emociones(texto):
-    estado = db.emociones.find_one({"usuario": "Perci"}) or {"closeness": 20, "irritation": 0}
-    p = texto.lower()
-    c, i = estado.get('closeness', 20), estado.get('irritation', 0)
-    
-    if any(w in p for w in ["gracias", "linda", "te quiero", "ayuda"]): c += 4; i -= 2
-    if any(w in p for w in ["tonta", "odio", "baka"]): i += 5; c -= 1
-    
-    c, i = max(0, min(100, c)), max(0, min(100, i))
-    db.emociones.update_one({"usuario": "Perci"}, {"$set": {"closeness": c, "irritation": i}}, upsert=True)
-    return c, i
-
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request):
     return """
-    <html>
-        <head>
-            <title>EMILY OS v2.5 | Multi-Device</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1">
-            <style>
-                :root { --main-color: #00ff41; }
-                body { background: #050505; color: var(--main-color); font-family: 'Segoe UI', sans-serif; padding: 20px; transition: 0.8s; }
-                #chat { height: 65vh; overflow-y: auto; border: 1px solid var(--main-color); padding: 15px; margin-bottom: 15px; background: rgba(0,0,0,0.95); border-radius: 10px; }
-                input { background: #111; color: #fff; border: 1px solid var(--main-color); width: 100%; padding: 15px; outline: none; border-radius: 8px; font-size: 16px; }
-                .msg-u { color: #888; margin: 10px 0; text-align: right; font-style: italic; }
-                .msg-e { color: var(--main-color); margin: 10px 0; border-left: 3px solid var(--main-color); padding-left: 12px; line-height: 1.4; }
-                #stats { font-size: 0.9em; margin-bottom: 10px; font-weight: bold; }
-            </style>
-        </head>
-        <body>
-            <h1>EMILY v2.5 [CONEXIÓN ACTIVA]</h1>
-            <div id="stats">SYNC OK | CONFIANZA: <span id="c_val">--</span>% | IRRITACIÓN: <span id="i_val">--</span>%</div>
-            <div id="chat"></div>
-            <input type="text" id="p" placeholder="¿Qué necesitas, Ricardo?" onkeypress="if(event.key==='Enter') enviar()">
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+        <title>EMILY OS v3.0 | Dashboard</title>
+        <link href="https://cdn.jsdelivr.net/npm/inter-ui@3.19.3/inter.min.css" rel="stylesheet">
+        <style>
+            :root {
+                --main-color: #00ff41; /* Verde base */
+                --bg-color: #0a0a0a;
+                --text-u: #e0e0e0;
+                --text-e: #ffffff;
+                --shadow: 0 4px 15px rgba(0,0,0,0.5);
+                transition: --main-color 0.8s, --bg-color 0.8s;
+            }
+
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            body { 
+                background: linear-gradient(135deg, var(--bg-color) 0%, #151515 100%);
+                color: var(--text-e); 
+                font-family: 'Inter', sans-serif; 
+                height: 100vh;
+                display: flex;
+                flex-direction: column;
+                overflow: hidden;
+            }
+
+            /* --- DASHBOARD HEADER --- */
+            header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 15px 25px;
+                background: rgba(10,10,10,0.8);
+                backdrop-filter: blur(10px);
+                border-bottom: 1px solid rgba(255,255,255,0.05);
+                box-shadow: var(--shadow);
+                z-index: 10;
+            }
+            h1 { font-size: 1.1em; font-weight: 700; letter-spacing: 2px; color: var(--main-color); }
+            #stats { display: flex; gap: 20px; font-size: 0.85em; }
+            .stat-card { background: rgba(255,255,255,0.03); padding: 5px 12px; border-radius: 6px; border: 1px solid rgba(255,255,255,0.05); }
+            .stat-val { color: var(--main-color); font-weight: bold; }
+
+            /* --- CHAT AREA --- */
+            #chat { 
+                flex: 1; 
+                overflow-y: auto; 
+                padding: 25px;
+                scroll-behavior: smooth;
+                display: flex;
+                flex-direction: column;
+                gap: 15px;
+            }
+            #chat::-webkit-scrollbar { width: 6px; }
+            #chat::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+
+            .bubble { max-width: 80%; padding: 12px 18px; border-radius: 12px; font-size: 0.95em; line-height: 1.5; position: relative; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
             
-            <script>
-                // Cargar historial al iniciar en cualquier dispositivo
-                window.onload = async () => {
+            /* Mensaje de Usuario (Ricardo) */
+            .msg-u-container { display: flex; justify-content: flex-end; }
+            .bubble-u { 
+                background: rgba(255,255,255,0.05);
+                color: var(--text-u); 
+                border-bottom-right-radius: 4px;
+            }
+            .bubble-u::before { content: 'R'; position: absolute; right: -15px; bottom: 0; font-size: 0.7em; color: #555; }
+
+            /* Mensaje de EMILY */
+            .msg-e-container { display: flex; justify-content: flex-start; }
+            .bubble-e { 
+                background: linear-gradient(135deg, rgba(0,255,65,0.1) 0%, rgba(0,255,65,0.02) 100%);
+                color: var(--text-e); 
+                border: 1px solid rgba(0,255,65,0.1);
+                border-bottom-left-radius: 4px;
+            }
+            .bubble-e::before { content: 'E'; position: absolute; left: -15px; bottom: 0; font-size: 0.7em; color: var(--main-color); }
+
+            /* --- INPUT AREA --- */
+            #input-area {
+                padding: 15px 25px;
+                background: rgba(10,10,10,0.8);
+                backdrop-filter: blur(10px);
+                border-top: 1px solid rgba(255,255,255,0.05);
+                box-shadow: 0 -4px 15px rgba(0,0,0,0.3);
+            }
+            input { 
+                width: 100%; 
+                padding: 14px 20px; 
+                background: rgba(255,255,255,0.02);
+                color: #fff; 
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 10px; 
+                font-size: 16px; 
+                outline: none; 
+                transition: border 0.3s, background 0.3s;
+            }
+            input:focus { border-color: var(--main-color); background: rgba(255,255,255,0.04); }
+
+        </style>
+    </head>
+    <body>
+        <header>
+            <h1>EMILY OS v3.0</h1>
+            <div id="stats">
+                <div class="stat-card">Confianza: <span id="c_val" class="stat-val">--</span>%</div>
+                <div class="stat-card">Irritación: <span id="i_val" class="stat-val">--</span>%</div>
+            </div>
+        </header>
+        
+        <div id="chat">
+            </div>
+        
+        <div id="input-area">
+            <input type="text" id="p" placeholder="¿Cómo puedo ayudarte hoy, Ricardo?" onkeypress="if(event.key==='Enter') enviar()">
+        </div>
+        
+        <script>
+            // LÓGICA DE HISTORIAL PERSISTENTE
+            window.onload = async () => {
+                try {
                     const res = await fetch('/historial');
                     const data = await res.json();
                     const chat = document.getElementById('chat');
                     data.historial.forEach(m => {
-                        chat.innerHTML += `<div class="msg-u"><b>TÚ:</b> ${m.u}</div>`;
-                        chat.innerHTML += `<div class="msg-e"><b>EMILY:</b> ${m.e}</div>`;
+                        appendMessage(m.u, 'u');
+                        appendMessage(m.e, 'e');
                     });
                     chat.scrollTop = chat.scrollHeight;
-                };
+                } catch(e) { console.error("Error cargando historial", e); }
+            };
 
-                function updateUI(c, i) {
-                    document.getElementById('c_val').innerText = c;
-                    document.getElementById('i_val').innerText = i;
-                    let color = (i > 20) ? "#ff4d4d" : (c > 30) ? "#ff99cc" : "#00ff41";
-                    document.documentElement.style.setProperty('--main-color', color);
+            // Función única para pintar mensajes estéticos
+            function appendMessage(text, type) {
+                const chat = document.getElementById('chat');
+                const container = document.createElement('div');
+                container.className = `msg-${type}-container`;
+                
+                const bubble = document.createElement('div');
+                bubble.className = `bubble bubble-${type}`;
+                bubble.innerText = text;
+                
+                container.appendChild(bubble);
+                chat.appendChild(container);
+                chat.scrollTop = chat.scrollHeight;
+            }
+
+            function updateUI(c, i) {
+                document.getElementById('c_val').innerText = c;
+                document.getElementById('i_val').innerText = i;
+                
+                // --- LÓGICA DE WAIFU-FICACTION DE COLORES ---
+                let mainColor = "#00ff41"; // Verde base
+                let bgColor = "#0a0a0a"; // Fondo oscuro
+
+                if (i > 25) { // Enojada / Tsunderefied
+                    mainColor = "#ff4d4d"; // Rojo F1
+                    bgColor = "#150a0a"; // Fondo ligeramente rojizo
+                } else if (c > 30) { // Tierna / Tsukasa-vibe
+                    mainColor = "#ff99cc"; // Rosa pastel
+                    bgColor = "#120a15"; // Fondo ligeramente púrpura
                 }
+                
+                document.documentElement.style.setProperty('--main-color', mainColor);
+                document.documentElement.style.setProperty('--bg-color', bgColor);
+            }
 
-                async function enviar() {
-                    const box = document.getElementById('p');
-                    const q = box.value; if(!q) return;
-                    box.value = '';
-                    document.getElementById('chat').innerHTML += `<div class="msg-u"><b>TÚ:</b> ${q}</div>`;
-                    
-                    const res = await fetch('/preguntar', {
-                        method: 'POST', 
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({pregunta: q})
-                    });
-                    const data = await res.json();
-                    
-                    document.getElementById('chat').innerHTML += `<div class="msg-e"><b>EMILY:</b> ${data.emily_dice}</div>`;
-                    document.getElementById('chat').scrollTop = document.getElementById('chat').scrollHeight;
-                    updateUI(data.closeness, data.irritation);
+            async function enviar() {
+                const box = document.getElementById('p');
+                const q = box.value; if(!q) return;
+                box.value = '';
+                
+                appendMessage(q, 'u');
+                
+                const res = await fetch('/preguntar', {
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({pregunta: q})
+                });
+                const data = await res.json();
+                
+                appendMessage(data.emily_dice, 'e');
+                updateUI(data.closeness, data.irritation);
 
-                    if(data.audio) {
-                        const audio = new Audio("data:audio/mp3;base64," + data.audio);
-                        audio.playbackRate = 1.12; 
-                        audio.preservesPitch = false; 
-                        audio.play();
-                    }
+                if(data.audio) {
+                    const audio = new Audio("data:audio/mp3;base64," + data.audio);
+                    audio.playbackRate = 1.12; 
+                    audio.preservesPitch = false; 
+                    audio.play();
                 }
-            </script>
-        </body>
+            }
+        </script>
+    </body>
     </html>
     """
-
-@app.post("/preguntar")
-def preguntar_emily(consulta: Consulta):
-    contexto_previo = obtener_contexto_reciente()
-    c, i = gestionar_emociones(consulta.pregunta)
-    
-    # Personalidad Tsukasa / Tsundere refinada
-    mood = "neutral"
-    if i > 20: mood = "sarcástica y distante"
-    if c > 30: mood = "tierna, protectora y honesta"
-    
-    instrucciones = (
-        f"Eres EMILY, compañera inteligente de Ricardo. Confianza: {c}%, Irritación: {i}%. Humor: {mood}. "
-        "Eres madura y leal. Tu objetivo es que Ricardo sea el mejor ingeniero del IPN. "
-        "Si Ricardo te pide controlar algo (Spotify, Ventilador, Calendario), actúa como si pudieras "
-        "y confirma que estás 'procesando la solicitud' (pronto conectaremos los cables reales)."
-    )
-    
-    try:
-        completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": instrucciones + "\nHistorial:\n" + contexto_previo},
-                {"role": "user", "content": consulta.pregunta}
-            ],
-            model="llama-3.3-70b-versatile"
-        )
-        respuesta = completion.choices[0].message.content
-        
-        # Audio Waifu-fied
-        tts = gTTS(text=respuesta, lang='es', tld='com.mx')
-        fp = BytesIO()
-        tts.write_to_fp(fp)
-        audio_b64 = base64.b64encode(fp.getvalue()).decode()
-
-        chat_history.insert_one({"pregunta": consulta.pregunta, "respuesta": respuesta, "timestamp": datetime.datetime.utcnow()})
-        return {"emily_dice": respuesta, "audio": audio_b64, "closeness": c, "irritation": i}
-    except Exception as e:
-        return {"emily_dice": f"Error de sistema: {str(e)}", "closeness": c, "irritation": i}
