@@ -6,3 +6,4 @@ python-multipart
 pymongo[srv]
 dnspython
 gtts
+google-search-results
