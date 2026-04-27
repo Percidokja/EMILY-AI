@@ -7,3 +7,4 @@ pymongo[srv]
 dnspython
 gtts
 google-search-results
+requests
